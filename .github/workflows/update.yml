@@ -1,0 +1,24 @@
+name: 每日更新行业快照
+on:
+  schedule:
+    - cron: '40 7 * * 1-5'   # 北京时间 15:40，周一到周五
+  workflow_dispatch:
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node update.js
+      - run: node test_treemap.js
+      - name: 提交
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data.js
+          git diff --cached --quiet || git commit -m "更新行业快照 $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
+          git push
