@@ -56,13 +56,14 @@ button:focus-visible,a:focus-visible{outline:2px solid #F2C14E;outline-offset:2p
 /* 图区 */
 .map{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
 .cvwrap{flex:1;min-height:0;position:relative}
-canvas{display:block;width:100%;height:100%;touch-action:manipulation}
+canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none}
 .crumb{display:none;align-items:center;gap:2px;padding:6px 8px;font-size:13px;background:var(--panel);border-bottom:1px solid var(--line)}
 .crumb.on{display:flex}
 .crumb button{padding:3px 8px;border-radius:5px;color:var(--ink-2)}
 .crumb button:hover{color:var(--ink);background:var(--panel-2)}
 .crumb button[aria-current="true"]{color:var(--ink);font-weight:600;cursor:default}
 .crumb span{color:var(--ink-3)}
+.crumb .zr{margin-left:auto;color:#F2C14E;font-variant-numeric:tabular-nums}
 .tip{position:absolute;pointer-events:none;display:none;background:rgba(20,23,28,.94);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.45;color:var(--ink-2);max-width:220px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 .tip b{display:block;font-size:14px;color:var(--ink);font-weight:600}
 .tip .z{font-weight:600} .tip .z.u{color:var(--up)} .tip .z.d{color:var(--down)}
@@ -120,7 +121,7 @@ canvas{display:block;width:100%;height:100%;touch-action:manipulation}
     <div class="legend">
       <div class="lab"><span>跌 5%</span><span>平</span><span>涨 5%</span></div>
       <div class="bar"></div>
-      <div class="row"><span>点行业名可放大</span><label class="toggle"><input type="checkbox" id="cvd">红蓝配色</label></div>
+      <div class="row"><span>滚轮缩放 · 点行业名进入</span><label class="toggle"><input type="checkbox" id="cvd">红蓝配色</label></div>
     </div>
   </aside>
 
@@ -167,6 +168,9 @@ const RAIL = [
   { i: 'sh000300' }, { i: 'sh000016' }, { i: 'sh000905' }, { i: 'sh000852' },
 ];
 const state = { filter: 'all', path: [], live: null, liveFail: 0 };
+const view = { k: 1, tx: 0, ty: 0 };   // 缩放倍数与平移（屏幕像素）
+let vis = { x0: 0, y0: 0, x1: 0, y1: 0 };
+const offscreen = (x, y, w, h) => x + w < vis.x0 || x > vis.x1 || y + h < vis.y0 || y > vis.y1;
 
 function wavg(list) { let s = 0, w = 0; for (const x of list) if (x[3] != null) { s += x[3] * x[2]; w += x[2]; } return w ? s / w : null; }
 function buildTree() {
@@ -237,19 +241,23 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg');
   ctx.fillRect(0, 0, W, H);
+  clampView();
+  ctx.translate(view.tx, view.ty);
+  const Ww = W * view.k, Wh = H * view.k;
+  vis = { x0: -view.tx, y0: -view.ty, x1: -view.tx + W, y1: -view.ty + H };
   const node = currentNode(secs);
   $('empty').classList.toggle('on', !node.kids.length);
   const mob = isMobile();
   const HDR = mob ? 17 : 19, SUBH = mob ? 14 : 15;
 
-  if (node.kind === 'sub') { drawStocks(node.kids, 0, 0, W, H); }
-  else if (node.kind === 'sector') { drawGroups(node.kids, 0, 0, W, H, SUBH, 'sub', true); }
+  if (node.kind === 'sub') { drawStocks(node.kids, 0, 0, Ww, Wh); }
+  else if (node.kind === 'sector') { drawGroups(node.kids, 0, 0, Ww, Wh, SUBH, 'sub', true); }
   else {
-    const rects = squarify(node.kids, 0, 0, W, H);
+    const rects = squarify(node.kids, 0, 0, Ww, Wh);
     for (const r of rects) {
       const s = r.item;
       const w = r.w - 2, h = r.h - 2, x = r.x + 1, y = r.y + 1;
-      if (w < 4 || h < 4) continue;
+      if (w < 4 || h < 4 || offscreen(x, y, w, h)) continue;
       drawHeader(x, y, w, Math.min(HDR, h), s, 'sector');
       const ih = h - HDR;
       if (ih < 6) continue;
@@ -269,7 +277,7 @@ function drawGroups(groups, x, y, w, h, SUBH, kind, zoomed) {
     const u = r.item;
     const g = zoomed ? 2 : 1;
     const rx = r.x + g, ry = r.y + g, rw = r.w - g * 2, rh = r.h - g * 2;
-    if (rw < 3 || rh < 3) continue;
+    if (rw < 3 || rh < 3 || offscreen(rx, ry, rw, rh)) continue;
     const showHead = rw >= 46 && rh >= SUBH + 18;
     if (showHead) {
       drawHeader(rx, ry, rw, SUBH, u, kind);
@@ -310,7 +318,7 @@ function drawStocks(stocks, x, y, w, h) {
   for (const r of rects) {
     const s = r.item.s;
     const rx = r.x + 0.5, ry = r.y + 0.5, rw = r.w - 1, rh = r.h - 1;
-    if (rw < 1 || rh < 1) continue;
+    if (rw < 1 || rh < 1 || offscreen(rx, ry, rw, rh)) continue;
     ctx.fillStyle = color(s[3]);
     ctx.fillRect(rx, ry, rw, rh);
     hits.stocks.push({ x: rx, y: ry, w: rw, h: rh, s });
@@ -340,12 +348,15 @@ function drawStocks(stocks, x, y, w, h) {
 /* ---------- 面包屑 / 缩放 ---------- */
 function updateCrumb(node, secs) {
   const el = $('crumb');
-  if (!state.path.length) { el.classList.remove('on'); el.innerHTML = ''; return; }
+  const zoomed = view.k > 1.001;
+  if (!state.path.length && !zoomed) { el.classList.remove('on'); el.innerHTML = ''; return; }
   const parts = [['全部', []]];
   state.path.forEach((p, i) => parts.push([p, state.path.slice(0, i + 1)]));
-  el.innerHTML = parts.map((p, i) => (i ? '<span>›</span>' : '') + `<button type="button" data-i="${i}" ${i === parts.length - 1 ? 'aria-current="true"' : ''}>${i === 0 ? '‹ ' : ''}${p[0]}</button>`).join('');
+  el.innerHTML = parts.map((p, i) => (i ? '<span>›</span>' : '') + `<button type="button" data-i="${i}" ${i === parts.length - 1 ? 'aria-current="true"' : ''}>${i === 0 ? '‹ ' : ''}${p[0]}</button>`).join('')
+    + (zoomed ? `<button type="button" class="zr" title="恢复到原始大小">${view.k.toFixed(1)}× 重置</button>` : '');
   el.classList.add('on');
-  el.querySelectorAll('button').forEach(b => b.onclick = () => { state.path = parts[+b.dataset.i][1]; draw(); });
+  el.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => { state.path = parts[+b.dataset.i][1]; resetView(); draw(); });
+  const zr = el.querySelector('.zr'); if (zr) zr.onclick = () => { resetView(); draw(); };
 }
 
 /* ---------- 尺寸 ---------- */
@@ -360,16 +371,82 @@ function resize() {
 new ResizeObserver(resize).observe(mapEl);
 
 /* ---------- 交互 ---------- */
+const tip = $('tip');
 function hit(px, py) {
+  px -= view.tx; py -= view.ty;
   for (let i = hits.stocks.length - 1; i >= 0; i--) { const r = hits.stocks[i]; if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { stock: r.s }; }
   for (let i = hits.heads.length - 1; i >= 0; i--) { const r = hits.heads[i]; if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { head: r }; }
   return null;
 }
-let down = null;
-cv.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, t: Date.now() }; });
+/* 缩放与平移 */
+const K_MAX = 40;
+function clampView() {
+  view.k = Math.min(K_MAX, Math.max(1, view.k));
+  view.tx = Math.min(0, Math.max(W - W * view.k, view.tx));
+  view.ty = Math.min(0, Math.max(H - H * view.k, view.ty));
+}
+function resetView() { view.k = 1; view.tx = 0; view.ty = 0; }
+function zoomAt(mx, my, factor) {
+  const k0 = view.k, k1 = Math.min(K_MAX, Math.max(1, k0 * factor));
+  if (k1 === k0) return;
+  const r = k1 / k0;
+  view.tx = mx - (mx - view.tx) * r;
+  view.ty = my - (my - view.ty) * r;
+  view.k = k1;
+  scheduleDraw();
+}
+let raf = 0;
+function scheduleDraw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const b = cv.getBoundingClientRect();
+  const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;          // 行模式换算成像素
+  zoomAt(e.clientX - b.left, e.clientY - b.top, Math.exp(-d * 0.0025));
+}, { passive: false });
+cv.addEventListener('dblclick', e => {
+  const b = cv.getBoundingClientRect();
+  if (view.k > 1.001) { resetView(); draw(); } else zoomAt(e.clientX - b.left, e.clientY - b.top, 3);
+});
+
+const ptrs = new Map();      // 按下的指针
+let down = null, pinch = null;
+cv.addEventListener('pointerdown', e => {
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  if (ptrs.size === 1) down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0 };
+  else if (ptrs.size === 2) {
+    const [a, c] = [...ptrs.values()];
+    pinch = { d: Math.hypot(a.x - c.x, a.y - c.y), mx: (a.x + c.x) / 2, my: (a.y + c.y) / 2 };
+    down = null;
+  }
+});
+cv.addEventListener('pointermove', e => {
+  const p = ptrs.get(e.pointerId);
+  if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 2 && pinch) {
+    const [a, c] = [...ptrs.values()];
+    const d = Math.hypot(a.x - c.x, a.y - c.y), mx = (a.x + c.x) / 2, my = (a.y + c.y) / 2;
+    const b = cv.getBoundingClientRect();
+    view.tx += mx - pinch.mx; view.ty += my - pinch.my;
+    zoomAt(mx - b.left, my - b.top, d / (pinch.d || d));
+    scheduleDraw();
+    pinch = { d, mx, my };
+  } else if (down && ptrs.size === 1) {
+    down.moved += Math.hypot(e.clientX - down.lx, e.clientY - down.ly);
+    if (view.k > 1.001 && down.moved > 4) {
+      view.tx += e.clientX - down.lx; view.ty += e.clientY - down.ly;
+      tip.style.display = 'none';
+      scheduleDraw();
+    }
+    down.lx = e.clientX; down.ly = e.clientY;
+  }
+});
+function endPtr(e) { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; }
 cv.addEventListener('pointerup', e => {
+  endPtr(e);
   if (!down) return;
-  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  const moved = down.moved;
   down = null;
   if (moved > 8) return;
   const b = cv.getBoundingClientRect();
@@ -379,18 +456,17 @@ cv.addEventListener('pointerup', e => {
     if (h.head.kind === 'sector') state.path = [h.head.node.n];
     else if (state.path.length === 1) state.path = [state.path[0], h.head.node.n];
     else { const s = allStocks.find(x => x.sub === h.head.node.n); state.path = [s ? s.sec : state.path[0], h.head.node.n]; }
-    closeSheet(); draw();
+    resetView(); closeSheet(); draw();
   } else openSheet(h.stock);
 });
-cv.addEventListener('pointercancel', () => { down = null; });
+cv.addEventListener('pointercancel', e => { endPtr(e); down = null; });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if ($('sheet').classList.contains('on')) closeSheet(); else if (state.path.length) { state.path.pop(); draw(); } }
+  if (e.key === 'Escape') { if ($('sheet').classList.contains('on')) closeSheet(); else if (view.k > 1.001) { resetView(); draw(); } else if (state.path.length) { state.path.pop(); draw(); } }
 });
 
 // 桌面悬停提示
-const tip = $('tip');
 cv.addEventListener('pointermove', e => {
-  if (e.pointerType !== 'mouse') return;
+  if (e.pointerType !== 'mouse' || (down && down.moved > 4)) return;
   const b = cv.getBoundingClientRect();
   const x = e.clientX - b.left, y = e.clientY - b.top;
   const h = hit(x, y);
@@ -415,7 +491,7 @@ function openSheet(s) {
   <div class="m"><span>总市值</span>${fmtCap(s[2])}<span>行业</span>${s.sec} › ${s.sub}</div>
   <button class="go" type="button">只看 ${s.sub}</button>`;
   sheet.querySelector('.x').onclick = closeSheet;
-  sheet.querySelector('.go').onclick = () => { state.path = [s.sec, s.sub]; closeSheet(); draw(); };
+  sheet.querySelector('.go').onclick = () => { state.path = [s.sec, s.sub]; resetView(); closeSheet(); draw(); };
   sheet.classList.add('on');
 }
 function closeSheet() { sheet.classList.remove('on'); }
@@ -441,7 +517,7 @@ function renderRail() {
   // 手机横条
   $('strip').innerHTML = `<button type="button" class="br" disabled><b class="u">${u}</b>涨<b class="f">${f}</b>平<b class="d">${d}</b>跌</button>` +
     rows.map(o => `<button type="button" ${o.r.f ? `data-f="${o.r.f}"` : ''} aria-pressed="${!!o.pressed}">${o.name}<b class="${cls(o.val)}">${o.zt || (o.ix ? '—' : fmtCap(total))}</b></button>`).join('');
-  document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { state.filter = b.dataset.f; state.path = []; closeSheet(); renderRail(); draw(); });
+  document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { state.filter = b.dataset.f; state.path = []; resetView(); closeSheet(); renderRail(); draw(); });
 }
 
 function setStatus(txt, live) {
@@ -533,7 +609,7 @@ function writeHash() {
   const h = state.path.length ? '#' + state.path.map(encodeURIComponent).join('/') : '';
   if (h !== location.hash) history.replaceState(null, '', location.pathname + location.search + h);
 }
-window.addEventListener('hashchange', () => { state.path = readHash(); draw(); });
+window.addEventListener('hashchange', () => { state.path = readHash(); resetView(); draw(); });
 state.path = readHash();
 
 /* ---------- 启动 ---------- */
